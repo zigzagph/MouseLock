@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # WIN32 = build as a GUI app (uses wWinMain, no console window)
 add_executable(CursorLocker WIN32
     CursorLocker.cpp
+    CursorLocker.rc
     CursorLocker.manifest
 )
 

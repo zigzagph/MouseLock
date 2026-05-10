@@ -14,6 +14,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include "resource.h"
 #include <windowsx.h>   // GET_X_LPARAM, GET_Y_LPARAM
 #include <shellapi.h>
 #include <vector>
@@ -327,7 +328,7 @@ static void ShowTrayMenu(HWND owner)
     }
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)monSub, L"Lock to monitor");
 
-    AppendMenuW(menu, MF_STRING, IDM_LOCK_REGION, L"Lock to custom region…");
+    AppendMenuW(menu, MF_STRING, IDM_LOCK_REGION, L"Lock to custom region...");
     AppendMenuW(menu, MF_STRING, IDM_LOCK_WINDOW, L"Lock to active window (3s)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_TOGGLE, L"Toggle lock\tCtrl+Alt+L");
@@ -447,7 +448,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
     g_nid.uID              = 1;
     g_nid.uFlags           = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
-    g_nid.hIcon            = LoadIcon(nullptr, IDI_APPLICATION);
+    g_nid.hIcon            = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
     wcscpy_s(g_nid.szTip, L"Cursor Locker (idle)");
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 

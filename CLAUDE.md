@@ -8,14 +8,21 @@ MouseLock is a minimal native Win32 application (~50 KB, no runtime deps) that c
 
 ## Build
 
-**CMake (recommended):**
-```bash
+**PowerShell script (recommended):** Handles MSVC environment setup automatically.
+```powershell
+.\make.ps1           # build
+.\make.ps1 clean     # delete build folder
+.\make.ps1 rebuild   # clean then build
+```
+
+**CMake manually:**
+```powershell
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-**MSVC directly:**
-```bash
+**MSVC directly** (from a VS Developer Command Prompt):
+```bat
 cl /EHsc /std:c++17 /O2 CursorLocker.cpp /link user32.lib gdi32.lib shell32.lib /SUBSYSTEM:WINDOWS /ENTRY:wWinMain /MANIFEST:NO
 mt -manifest CursorLocker.manifest -outputresource:CursorLocker.exe;1
 ```
@@ -23,10 +30,9 @@ mt -manifest CursorLocker.manifest -outputresource:CursorLocker.exe;1
 **MinGW:**
 ```bash
 g++ -std=c++17 -O2 -municode -mwindows CursorLocker.cpp -o CursorLocker.exe -luser32 -lgdi32 -lshell32
-windres CursorLocker.manifest -o manifest.o && g++ ... manifest.o
 ```
 
-Requires: MSVC (VS 2019+) or MinGW-w64, CMake 3.15+ if using CMake. Windows-only — no cross-compilation path.
+Requires: MSVC (VS 2019+ Build Tools) or MinGW-w64, CMake 3.15+. Windows-only — no cross-compilation path.
 
 ## Architecture
 

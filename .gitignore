@@ -1,0 +1,11 @@
+# CMake build output
+build/
+
+# MSVC direct build artifacts
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.lib
+manifest.o
