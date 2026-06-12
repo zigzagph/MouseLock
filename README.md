@@ -1,6 +1,6 @@
 # MouseLock
 
-A minimal native Win32 application (~50 KB, no runtime dependencies) that confines the mouse cursor to a screen region using `ClipCursor()`.
+A minimal native Win32 application (~50 KB, no runtime dependencies) that confines the mouse cursor to a screen region using a dual-layer mechanism: a `WH_MOUSE_LL` low-level mouse hook as the primary barrier and `ClipCursor()` as a secondary fallback.
 
 ## Features
 
@@ -8,7 +8,7 @@ A minimal native Win32 application (~50 KB, no runtime dependencies) that confin
 - Lock the cursor to a custom drawn region
 - Lock the cursor to the currently active window
 - System tray icon with context menu
-- Global hotkey `Ctrl+Alt+L` to toggle lock on/off
+- Global hotkey `Ctrl+Alt+L` to toggle lock on/off — remembers the previous lock mode and re-arms it on the next press
 - Automatically re-asserts the lock every 250ms to survive UAC prompts, screen savers, and display config changes
 - Single-instance enforcement
 
