@@ -49,6 +49,9 @@ static bool        g_locked        = false;
 static RECT        g_lockedRect    = {};
 static HWND        g_trackedWnd    = nullptr;
 
+// Low-level mouse hook — installed when locked, bypasses ClipCursor fights.
+static HHOOK       g_mouseHook     = nullptr;
+
 // Region picker state
 static POINT       g_dragStart     = {};
 static POINT       g_dragCurrent   = {};
@@ -57,6 +60,49 @@ static bool        g_dragging      = false;
 // Monitor enumeration cache (for the tray submenu)
 struct MonInfo { RECT bounds; std::wstring name; };
 static std::vector<MonInfo> g_monitors;
+
+// ---------- Low-level mouse hook ----------
+//
+// WH_MOUSE_LL intercepts mouse input in the OS hook chain before any
+// application (including the game) processes it. When the cursor would move
+// outside g_lockedRect we clamp it with SetCursorPos() and swallow the
+// original event. ClipCursor() is kept as a secondary layer.
+static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wp, LPARAM lp)
+{
+    if (nCode == HC_ACTION && g_locked && wp == WM_MOUSEMOVE)
+    {
+        auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
+
+        // LLMHF_INJECTED: ignore events we generated ourselves to avoid loops.
+        if (!(ms->flags & LLMHF_INJECTED))
+        {
+            const RECT& r = g_lockedRect;
+            LONG x = ms->pt.x;
+            LONG y = ms->pt.y;
+
+            LONG cx = (x < r.left) ? r.left : (x >= r.right  ? r.right  - 1 : x);
+            LONG cy = (y < r.top)  ? r.top  : (y >= r.bottom ? r.bottom - 1 : y);
+
+            if (cx != x || cy != y)
+            {
+                SetCursorPos(cx, cy);
+                return 1; // swallow the out-of-bounds event
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, nCode, wp, lp);
+}
+
+static void InstallHook()
+{
+    if (!g_mouseHook)
+        g_mouseHook = SetWindowsHookExW(WH_MOUSE_LL, LowLevelMouseProc, nullptr, 0);
+}
+
+static void RemoveHook()
+{
+    if (g_mouseHook) { UnhookWindowsHookEx(g_mouseHook); g_mouseHook = nullptr; }
+}
 
 // ---------- Helpers ----------
 static void ApplyClip(const RECT& r) { ClipCursor(&r); }
@@ -71,8 +117,8 @@ static void SetTrayTooltip(const wchar_t* text)
 static void Unlock()
 {
     g_locked = false;
-    g_mode   = LockMode::None;
-    g_trackedWnd = nullptr;
+    // Preserve g_mode and g_trackedWnd so ToggleLock can re-arm the previous mode.
+    RemoveHook();
     ReleaseClip();
     SetTrayTooltip(L"Cursor Locker (idle)");
 }
@@ -89,12 +135,15 @@ static void ReassertClip()
             Unlock();
             return;
         }
+        g_lockedRect = wr; // keep hook rect in sync as window moves
         ApplyClip(wr);
     }
     else if (g_mode == LockMode::Rect)
     {
         ApplyClip(g_lockedRect);
     }
+
+    InstallHook(); // no-op if already installed
 }
 
 static void LockToRect(const RECT& r, const wchar_t* label)
@@ -410,6 +459,7 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         KillTimer(hwnd, TIMER_REASSERT);
         UnregisterHotKey(hwnd, HOTKEY_TOGGLE);
         Shell_NotifyIconW(NIM_DELETE, &g_nid);
+        RemoveHook();
         ReleaseClip();
         PostQuitMessage(0);
         return 0;
