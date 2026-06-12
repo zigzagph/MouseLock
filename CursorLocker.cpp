@@ -117,8 +117,7 @@ static void SetTrayTooltip(const wchar_t* text)
 static void Unlock()
 {
     g_locked = false;
-    g_mode   = LockMode::None;
-    g_trackedWnd = nullptr;
+    // Preserve g_mode and g_trackedWnd so ToggleLock can re-arm the previous mode.
     RemoveHook();
     ReleaseClip();
     SetTrayTooltip(L"Cursor Locker (idle)");
