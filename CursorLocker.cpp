@@ -23,6 +23,7 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "advapi32.lib")
 
 // ---------- IDs ----------
 #define WM_TRAYICON      (WM_APP + 1)
@@ -36,6 +37,7 @@
 #define IDM_TOGGLE        1004
 #define IDM_UNLOCK        1005
 #define IDM_EXIT          1006
+#define IDM_AUTOSTART     1007
 #define IDM_MONITOR_BASE  2000  // 2000..2099 dynamic per-monitor entries
 
 // ---------- Lock state ----------
@@ -356,6 +358,43 @@ static void ShowRegionPicker(HINSTANCE hInst)
     SetFocus(g_overlayWnd);
 }
 
+// ---------- Autostart ----------
+static const wchar_t* kRunKey = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const wchar_t* kRunVal = L"CursorLocker";
+
+static bool IsAutoStartEnabled()
+{
+    HKEY hk;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &hk) != ERROR_SUCCESS)
+        return false;
+    DWORD size = 0;
+    bool found = RegQueryValueExW(hk, kRunVal, nullptr, nullptr, nullptr, &size) == ERROR_SUCCESS;
+    RegCloseKey(hk);
+    return found;
+}
+
+static void SetAutoStart(bool enable)
+{
+    HKEY hk;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &hk) != ERROR_SUCCESS)
+        return;
+    if (enable)
+    {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        wchar_t val[MAX_PATH + 3];
+        swprintf_s(val, L"\"%ls\"", exe);
+        RegSetValueExW(hk, kRunVal, 0, REG_SZ,
+                       (const BYTE*)val,
+                       (DWORD)((wcslen(val) + 1) * sizeof(wchar_t)));
+    }
+    else
+    {
+        RegDeleteValueW(hk, kRunVal);
+    }
+    RegCloseKey(hk);
+}
+
 // ---------- Tray menu ----------
 static void ShowTrayMenu(HWND owner)
 {
@@ -382,6 +421,9 @@ static void ShowTrayMenu(HWND owner)
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_TOGGLE, L"Toggle lock\tCtrl+Alt+L");
     AppendMenuW(menu, MF_STRING, IDM_UNLOCK, L"Unlock");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    UINT autostartFlags = MF_STRING | (IsAutoStartEnabled() ? MF_CHECKED : MF_UNCHECKED);
+    AppendMenuW(menu, autostartFlags, IDM_AUTOSTART, L"Start on login");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, IDM_EXIT,   L"Exit");
 
@@ -439,9 +481,10 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetTrayTooltip(L"Focus target window — locking in 3s…");
             SetTimer(hwnd, TIMER_FOCUS_GRAB, 3000, nullptr);
         }
-        else if (id == IDM_TOGGLE) ToggleLock();
-        else if (id == IDM_UNLOCK) Unlock();
-        else if (id == IDM_EXIT)   DestroyWindow(hwnd);
+        else if (id == IDM_TOGGLE)    ToggleLock();
+        else if (id == IDM_UNLOCK)    Unlock();
+        else if (id == IDM_AUTOSTART) SetAutoStart(!IsAutoStartEnabled());
+        else if (id == IDM_EXIT)      DestroyWindow(hwnd);
         else if (id >= IDM_MONITOR_BASE && id < IDM_MONITOR_BASE + (int)g_monitors.size())
         {
             const auto& m = g_monitors[id - IDM_MONITOR_BASE];
