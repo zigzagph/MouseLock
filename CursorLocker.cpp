@@ -37,8 +37,11 @@
 #define IDM_TOGGLE        1004
 #define IDM_UNLOCK        1005
 #define IDM_EXIT          1006
-#define IDM_AUTOSTART     1007
-#define IDM_MONITOR_BASE  2000  // 2000..2099 dynamic per-monitor entries
+#define IDM_AUTOSTART      1007
+#define IDM_SAVE_REGION    1008
+#define IDM_CLEAR_REGIONS  1009
+#define IDM_MONITOR_BASE   2000  // 2000..2099 dynamic per-monitor entries
+#define IDM_SAVED_BASE     3000  // 3000..3019 saved region entries
 
 // ---------- Lock state ----------
 enum class LockMode { None, Rect, Window };
@@ -62,6 +65,10 @@ static bool        g_dragging      = false;
 // Monitor enumeration cache (for the tray submenu)
 struct MonInfo { RECT bounds; std::wstring name; };
 static std::vector<MonInfo> g_monitors;
+
+// Saved custom regions (loaded from registry into this cache on each menu open)
+struct SavedRegion { RECT rect; wchar_t name[64]; };
+static std::vector<SavedRegion> g_savedRegions;
 
 // ---------- Low-level mouse hook ----------
 //
@@ -395,11 +402,72 @@ static void SetAutoStart(bool enable)
     RegCloseKey(hk);
 }
 
+// ---------- Saved regions ----------
+static const wchar_t* kRegionsKey  = L"SOFTWARE\\CursorLocker\\Regions";
+static const int      kMaxSavedRegions = 20;
+
+static std::vector<SavedRegion> LoadSavedRegions()
+{
+    std::vector<SavedRegion> result;
+    HKEY hk;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegionsKey, 0, KEY_QUERY_VALUE, &hk) != ERROR_SUCCESS)
+        return result;
+
+    for (int i = 0; i < kMaxSavedRegions; ++i)
+    {
+        wchar_t valName[8];
+        swprintf_s(valName, L"%d", i);
+        wchar_t data[64] = {};
+        DWORD size = sizeof(data);
+        if (RegQueryValueExW(hk, valName, nullptr, nullptr, (LPBYTE)data, &size) != ERROR_SUCCESS)
+            break;
+
+        LONG l, t, r, b;
+        if (swscanf_s(data, L"%ld,%ld,%ld,%ld", &l, &t, &r, &b) != 4) continue;
+
+        SavedRegion sr;
+        sr.rect = { l, t, r, b };
+        swprintf_s(sr.name, L"%ldx%ld at (%ld,%ld)", r - l, b - t, l, t);
+        result.push_back(sr);
+    }
+    RegCloseKey(hk);
+    return result;
+}
+
+static void SaveCurrentRegion(const RECT& r)
+{
+    auto existing = LoadSavedRegions();
+    for (const auto& sr : existing)
+        if (EqualRect(&sr.rect, &r)) return; // already saved
+
+    if ((int)existing.size() >= kMaxSavedRegions) return;
+
+    HKEY hk;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegionsKey, 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, &hk, nullptr) != ERROR_SUCCESS)
+        return;
+
+    wchar_t valName[8];
+    swprintf_s(valName, L"%d", (int)existing.size());
+    wchar_t data[64];
+    swprintf_s(data, L"%ld,%ld,%ld,%ld", r.left, r.top, r.right, r.bottom);
+    RegSetValueExW(hk, valName, 0, REG_SZ,
+                   (const BYTE*)data, (DWORD)((wcslen(data) + 1) * sizeof(wchar_t)));
+    RegCloseKey(hk);
+}
+
+static void ClearAllRegions()
+{
+    RegDeleteTreeW(HKEY_CURRENT_USER, kRegionsKey);
+    g_savedRegions.clear();
+}
+
 // ---------- Tray menu ----------
 static void ShowTrayMenu(HWND owner)
 {
     POINT pt; GetCursorPos(&pt);
     RefreshMonitorList();
+    g_savedRegions = LoadSavedRegions();
 
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, IDM_LOCK_PRIMARY, L"Lock to primary monitor");
@@ -417,8 +485,28 @@ static void ShowTrayMenu(HWND owner)
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)monSub, L"Lock to monitor");
 
     AppendMenuW(menu, MF_STRING, IDM_LOCK_REGION, L"Lock to custom region...");
+
+    HMENU savedSub = CreatePopupMenu();
+    if (g_savedRegions.empty())
+    {
+        AppendMenuW(savedSub, MF_STRING | MF_GRAYED, 0, L"(no saved regions)");
+    }
+    else
+    {
+        for (size_t i = 0; i < g_savedRegions.size(); ++i)
+            AppendMenuW(savedSub, MF_STRING, IDM_SAVED_BASE + (UINT)i, g_savedRegions[i].name);
+        AppendMenuW(savedSub, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(savedSub, MF_STRING, IDM_CLEAR_REGIONS, L"Clear all");
+    }
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)savedSub, L"Saved regions");
+
     AppendMenuW(menu, MF_STRING, IDM_LOCK_WINDOW, L"Lock to active window (3s)");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    if (g_mode == LockMode::Rect && g_lockedRect.right > g_lockedRect.left)
+    {
+        AppendMenuW(menu, MF_STRING, IDM_SAVE_REGION, L"Save current region");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(menu, MF_STRING, IDM_TOGGLE, L"Toggle lock\tCtrl+Alt+L");
     AppendMenuW(menu, MF_STRING, IDM_UNLOCK, L"Unlock");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -481,14 +569,21 @@ static LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetTrayTooltip(L"Focus target window — locking in 3s…");
             SetTimer(hwnd, TIMER_FOCUS_GRAB, 3000, nullptr);
         }
-        else if (id == IDM_TOGGLE)    ToggleLock();
-        else if (id == IDM_UNLOCK)    Unlock();
-        else if (id == IDM_AUTOSTART) SetAutoStart(!IsAutoStartEnabled());
-        else if (id == IDM_EXIT)      DestroyWindow(hwnd);
+        else if (id == IDM_TOGGLE)        ToggleLock();
+        else if (id == IDM_UNLOCK)        Unlock();
+        else if (id == IDM_AUTOSTART)     SetAutoStart(!IsAutoStartEnabled());
+        else if (id == IDM_SAVE_REGION)   SaveCurrentRegion(g_lockedRect);
+        else if (id == IDM_CLEAR_REGIONS) ClearAllRegions();
+        else if (id == IDM_EXIT)          DestroyWindow(hwnd);
         else if (id >= IDM_MONITOR_BASE && id < IDM_MONITOR_BASE + (int)g_monitors.size())
         {
             const auto& m = g_monitors[id - IDM_MONITOR_BASE];
             LockToRect(m.bounds, m.name.c_str());
+        }
+        else if (id >= IDM_SAVED_BASE && id < IDM_SAVED_BASE + (int)g_savedRegions.size())
+        {
+            const auto& sr = g_savedRegions[id - IDM_SAVED_BASE];
+            LockToRect(sr.rect, sr.name);
         }
         return 0;
     }
